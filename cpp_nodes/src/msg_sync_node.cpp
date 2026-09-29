@@ -10,6 +10,9 @@
 #include "message_filters/synchronizer.h"
 #include "message_filters/sync_policies/approximate_time.h"
 
+#include "std_msgs/msg/float64.hpp"
+#include <cmath>
+
 // For binding placeholders used in callback
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -21,15 +24,14 @@ public:
   SyncNode()
   : Node("sync_node")  // Initialize node with the name "sync_node"
   {
-    // ------------ TBD --------------
     // Create a message_filters::Subscriber for IMU topic
     // Use rmw_qos_profile_sensor_data for low-latency, best-effort delivery
-    imu_sub_ = ...; // subscription to /imu using rmw_qos_profile_sensor_data QoS
-
+    imu_sub_ = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Imu>>(
+      this, "/imu", rmw_qos_profile_sensor_data);
+    
     // Create a message_filters::Subscriber for Odometry topic
-    odom_sub_ = ...; // subscription to /odom using rmw_qos_profile_sensor_data
-
-    // ------------- TBD END -----------------
+    odom_sub_ = std::make_shared<message_filters::Subscriber<nav_msgs::msg::Odometry>>(
+      this, "/odom", rmw_qos_profile_sensor_data);
 
     // Define the approximate time policy with a queue size of 10
     // This allows the synchronizer to match messages with slightly different timestamps
@@ -37,6 +39,9 @@ public:
 
     // Register the callback function to be called when synchronized messages are received
     sync_->registerCallback(std::bind(&SyncNode::callback, this, _1, _2));
+
+    this->declare_parameter<double>("alpha", 0.98);
+    yaw_pub_ = this->create_publisher<std_msgs::msg::Float64>("/yaw/fused", 10);
   }
 
 private:
@@ -60,10 +65,29 @@ private:
 	RCLCPP_INFO(this->get_logger(),	"  Odometry position: [x=%.3f, y=%.3f, z=%.3f]", pos.x, pos.y, pos.z);
 	RCLCPP_INFO(this->get_logger(),	"  Odometry orientation: [x=%.3f, y=%.3f, z=%.3f, w=%.3f]", ori_odom.x, ori_odom.y, ori_odom.z, ori_odom.w);
 
-    //---------------------- TBD Comp Filter Stuff -------------------
-	  // Create a publisher for the fused data here and convert your HW4 code as well
-    
-    //----------------------------------------------------------------
+  auto quaternion_to_yaw = [](const geometry_msgs::msg::Quaternion & q) {
+    return std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                      1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+  };
+
+  auto wrap = [](double a) {
+    double m = std::fmod(a + M_PI, 2.0 * M_PI);
+    if (m < 0.0) {
+      m += 2.0 * M_PI;
+    }
+    return m - M_PI;
+  };
+
+  double alpha = this->get_parameter("alpha").as_double();
+  double theta_imu = quaternion_to_yaw(ori);
+  double theta_odom = quaternion_to_yaw(ori_odom);
+  double theta_fused = alpha * theta_imu + ((1 - alpha) * theta_odom);
+
+  theta_fused = wrap(theta_fused);
+
+  std_msgs::msg::Float64 out;
+  out.data = theta_fused;
+  yaw_pub_->publish(out);
   }
 
   // Define the sync policy type: ApproximateTime syncs messages with similar timestamps
@@ -77,6 +101,8 @@ private:
 
   // Synchronizer instance using the defined policy
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
+
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr yaw_pub_;
 };
 
 // Main function: initialize, spin the node, and shut down
