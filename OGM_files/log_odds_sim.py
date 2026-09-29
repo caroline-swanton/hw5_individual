@@ -9,7 +9,6 @@ This started code provides code base to implement occupancy grid mapping for HW5
 This is a stand alone code and does not require ROS
 --- TBD --- indicates the section to fill out   
 ... indicates the specific place to type the code
-
 """
 
 
