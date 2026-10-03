@@ -79,14 +79,26 @@ private:
   };
 
   double alpha = this->get_parameter("alpha").as_double();
-  double theta_imu = quaternion_to_yaw(ori);
   double theta_odom = quaternion_to_yaw(ori_odom);
-  double theta_fused = alpha * theta_imu + ((1 - alpha) * theta_odom);
 
-  theta_fused = wrap(theta_fused);
+  rclcpp::Time now = imu_msg->header.stamp;
+
+  if (!initialized_) {
+    yaw_fused_ = theta_odom;
+    last_time_ = now;
+    initialized_ = true;
+  }
+
+  double dt = (now - last_time_).seconds();
+  last_time_ = now;
+
+  double yaw_pred = yaw_fused_ + ang_vel.z * dt;
+
+  double err = wrap(theta_odom - yaw_pred);
+  yaw_fused_ = wrap(yaw_pred + (1.0 - alpha) * err);
 
   std_msgs::msg::Float64 out;
-  out.data = theta_fused;
+  out.data = yaw_fused_;
   yaw_pub_->publish(out);
   }
 
@@ -103,6 +115,10 @@ private:
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
 
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr yaw_pub_;
+
+  double yaw_fused_ = 0.0;
+  bool initialized_ = false;
+  rclcpp::Time last_time_;
 };
 
 // Main function: initialize, spin the node, and shut down
